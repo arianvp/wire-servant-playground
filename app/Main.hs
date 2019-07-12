@@ -1,4 +1,6 @@
 module Main where
+import qualified Server
+import qualified Network.Wai.Handler.Warp  as Warp
 
 main :: IO ()
-main = putStrLn "Hello, Haskell!"
+main = Warp.run 8080 Server.app

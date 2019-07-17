@@ -8,6 +8,7 @@
 {-# OPTIONS_GHC -Wno-unused-imports #-}
 module API where
 
+import Control.Monad.Except
 import Data.Aeson
 import Data.WorldPeace hiding (Nat)
 import GHC.Types (Nat)
@@ -88,6 +89,35 @@ api :: Proxy (ToServantApi Routes)
 api = genericApi @Routes Proxy
 
 
--- this code doesn't belong here...
+-- Server code.  Should go to Server.hs, but it's easier to have it in one module...
 
--- getHandler :: Int -> Servant
+class Monad m => MonadMulti (excepts :: [*]) (m :: * -> *) {- result{- not @Resp 200 String@, but @String@! -} -} where
+  throwSome :: forall (except :: *) any. IsMember except excepts => except -> m any
+
+instance Monad m => MonadMulti '[except] m where
+  throwSome = undefined
+
+instance Monad m => MonadMulti (except ': excepts) m where
+  throwSome = undefined
+
+
+type MultiServer excepts result = Server (Either (OpenUnion excepts) result)
+
+-- | With some luck, this can be called in the 'HasServer' instances and we won't have to see
+-- it a lot...
+catchSome :: forall excepts m result. MonadMulti excepts m => m result -> MultiServer excepts result
+catchSome = undefined
+
+
+getHandler :: MonadMulti '[ENotFound, EUnauthorized] m => Int -> m String
+getHandler i = do
+  when (i > 10) $ throwSome EUnauthorized
+  when (i `div` 2 /= 0) $ throwSome ENotFound
+  pure "12"
+
+
+putHandler :: MonadMulti '[EUnauthorized] m => Int -> m Bool
+putHandler = undefined
+
+
+-- instance HasServer ...

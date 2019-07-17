@@ -11,13 +11,14 @@ module API where
 import Control.Monad.Except
 import Data.Aeson
 import Data.WorldPeace hiding (Nat)
-import GHC.Types (Nat)
 import GHC.TypeLits
+import GHC.Types (Nat)
 import Network.HTTP.Types
 import Prelude
 import Servant.API.Generic
 import Servant hiding (Unauthorized)
 import Servant.Server
+import Servant.Server.Generic
 
 
 ----------------------------------------------------------------------
@@ -87,36 +88,36 @@ api = genericApi @Routes Proxy
 
 -- (Should go to Server.hs, but it's easier to have it in one module...)
 
-class Monad m => MonadMulti (excepts :: [*]) (m :: * -> *) {- result{- not @Resp 200 String@, but @String@! -} -} where
-  throwSome :: forall (except :: *) any. IsMember except excepts => except -> m any
+server :: Routes AsServer
+server = Routes
+  { _get = getHandler
+  , _put = putHandler
+  }
 
-instance Monad m => MonadMulti '[except] m where
-  throwSome = undefined
-
-instance Monad m => MonadMulti (except ': excepts) m where
-  throwSome = undefined
-
-
-type MultiServer excepts result = Server (Either (OpenUnion excepts) result)
-
--- | With some luck, this can be called in the 'HasServer' instances and we won't have to see
--- it a lot...
-catchSome :: forall excepts m result. MonadMulti excepts m => m result -> MultiServer excepts result
-catchSome = undefined
+app :: Application
+app = genericServe server
 
 
-getHandler :: MonadMulti '[ENotFound, EUnauthorized] m => Int -> m String
-getHandler _i = do
---  when (i > 10) $ throwSome EUnauthorized
---  when (i `div` 2 /= 0) $ throwSome ENotFound
-  pure "12"
+getHandler :: Int -> Server (MultiVerb 'GET '[ Resp 200 '[JSON] String
+                                             , ENotFound
+                                             , EUnauthorized
+                                             ])
+-- use @Handler (OpenUnion ...)@ instead of @Server (MultiVerb ...@
 
+-- another fun puzzle: since the status codes are provided on the type level, we will have to
+-- match the actual value returned by the handler with the entry in the union type where that
+-- status code is given (implicitly in the case or 'Resp' and in the 'IsResp' instance in the
+-- case of 'ErrorResp').
 
-putHandler :: MonadMulti '[EUnauthorized] m => Int -> m Bool
+getHandler = undefined
+
+putHandler :: Int -> String -> Server (MultiVerb 'PUT '[ Resp 200 '[JSON] Bool
+                                                       , EUnauthorized
+                                                       ])
 putHandler = undefined
 
 
--- instance HasServer ...
+
 
 
 ----------------------------------------------------------------------

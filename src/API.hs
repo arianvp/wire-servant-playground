@@ -12,6 +12,7 @@ import Control.Monad.Except
 import Data.Aeson
 import Data.WorldPeace hiding (Nat)
 import GHC.Types (Nat)
+import GHC.TypeLits
 import Network.HTTP.Types
 import Prelude
 import Servant.API.Generic
@@ -19,69 +20,61 @@ import Servant hiding (Unauthorized)
 import Servant.Server
 
 
--- | I ended up being in favor of having a dedicated default result distinguished from the
--- exceptions.  I think this will allow us to implement the handlers by *returning* the
--- default result and *throwing* the exceptions.  Also, we always need to have at least one
--- result for the handler to be useful, and with a default result we can allow the exceptions
--- lists to be empty.
---
--- And yes, it's safe!  Bear with me :)
+----------------------------------------------------------------------
+-- | multi-verbs.
+
 data MultiVerb
   (method :: k)
-  (contentTypes :: [*])
-  (excepts :: [{- IsWaiError => -} u]) -- ^ This is morally an 'OpenUnion'.
-  (resp :: u)  -- ^ 'Resp', or something involving 'ResponseHeader's.
-
--- | Names are up for debate.
-type JVerb method = MultiVerb method '[JSON]
+  (resps :: [u]) -- ^ This is morally an 'OpenUnion'.
 
 -- | 'Verb' without 'contentTypes' and 'method'; for use in 'MultiVerb'.
 data Resp
   (statusCode :: Nat)
+  (contentTypes :: [*])
   a
 
+-- | Special case that will save us a lot of boiler plate: errors are always json bodies of a
+-- very specific type.
+data ErrorResp
+  (statusCode :: Nat)
+  (label :: Symbol)
+  (message :: Symbol)
 
-data WaiError = WaiError Int String String
-  deriving stock (Generic, Eq, Show)
-
-notFound :: WaiError
-notFound = WaiError 404 "not-found" "what can i say?  it's not there!"
-
--- | (In wire, we probably want to define a prefix for all error types, or always imports
--- errors qualified in order to avoid name space cluttering.)
-data ENotFound = ENotFound
-  deriving stock (Generic)
-  deriving anyclass (ToJSON, FromJSON)
-
-unauthorized :: WaiError
-unauthorized = WaiError 403 "unauthorized" "or was it 401?"
-
-data EUnauthorized = EUnauthorized
-  deriving stock (Generic)
-  deriving anyclass (ToJSON, FromJSON)
+type ENotFound = ErrorResp 404 "not-found" "what can i say?  it's not there!"
+type EUnauthorized = ErrorResp 403 "unauthorized" "or was it 401?"
 
 
--- | Helper class for...  hm, not sure?
-class IsWaiError err where
-  toResp :: err -> WaiError
+----------------------------------------------------------------------
+-- reducing everything to the 'Resp' type may save us the trouble of writing more 'HasServer'
+-- instances.
 
-instance IsWaiError ENotFound where
-  toResp _ = notFound
+{-
 
-instance IsWaiError EUnauthorized where
-  toResp _ = unauthorized
+class IsResp resp where
+  type family ToResp resp :: Resp statusCode contentTypes a
 
+instance IsResp Resp where
+  type ToResp (Resp statusCode contentTypes a) = (Resp statusCode contentTypes a)
+
+instance IsResp (ErrorResp status label message) where
+  type ToResp = ...
+
+-}
+
+
+----------------------------------------------------------------------
+-- routing table
 
 data Routes route = Routes
   { _get :: route :- Capture "id" Int
-            :> JVerb 'GET '[ ENotFound
-                           , EUnauthorized
-                           ]
-                           (Resp 200 String)
+            :> MultiVerb 'GET '[ Resp 200 '[JSON] String
+                               , ENotFound
+                               , EUnauthorized
+                               ]
   , _put :: route :- Capture "id" Int :> ReqBody '[JSON] String
-            :> JVerb 'PUT '[ EUnauthorized
-                           ]
-                           (Resp 200 Bool)
+            :> MultiVerb 'PUT '[ Resp 200 '[JSON] Bool
+                               , EUnauthorized
+                               ]
   }
   deriving (Generic)
 
@@ -89,7 +82,10 @@ api :: Proxy (ToServantApi Routes)
 api = genericApi @Routes Proxy
 
 
--- Server code.  Should go to Server.hs, but it's easier to have it in one module...
+----------------------------------------------------------------------
+-- Server code.
+
+-- (Should go to Server.hs, but it's easier to have it in one module...)
 
 class Monad m => MonadMulti (excepts :: [*]) (m :: * -> *) {- result{- not @Resp 200 String@, but @String@! -} -} where
   throwSome :: forall (except :: *) any. IsMember except excepts => except -> m any
@@ -110,9 +106,9 @@ catchSome = undefined
 
 
 getHandler :: MonadMulti '[ENotFound, EUnauthorized] m => Int -> m String
-getHandler i = do
-  when (i > 10) $ throwSome EUnauthorized
-  when (i `div` 2 /= 0) $ throwSome ENotFound
+getHandler _i = do
+--  when (i > 10) $ throwSome EUnauthorized
+--  when (i `div` 2 /= 0) $ throwSome ENotFound
   pure "12"
 
 
@@ -124,6 +120,7 @@ putHandler = undefined
 
 
 ----------------------------------------------------------------------
+-- experiment with exceptions
 
 {-
 

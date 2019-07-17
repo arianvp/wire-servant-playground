@@ -121,3 +121,62 @@ putHandler = undefined
 
 
 -- instance HasServer ...
+
+
+----------------------------------------------------------------------
+
+{-
+
+coolThrow :: forall m e es any. (IsMember e es, MonadError (OpenUnion es) m) => e -> m any
+coolThrow = throwError . openUnionLift
+
+coolPure :: (Monad m, IsMember e es) => e -> m (OpenUnion es)
+coolPure = pure . openUnionLift
+
+coolCatch :: forall (m :: * -> *) (e :: *) (es :: [*]). (Contains es (e : es), Functor m) => ExceptT (OpenUnion es) m e -> m (OpenUnion (e : es))
+coolCatch = fmap (either relaxOpenUnion openUnionLift) . runExceptT
+
+coolDemonstration :: IO (OpenUnion '[Int, Bool, String])
+coolDemonstration = coolCatch $ do
+  when False $ coolThrow (3 :: Int)
+  when True $ coolThrow False
+  coolPure ("bla" :: String)
+
+
+
+[1 of 1] Compiling API              ( API.hs, interpreted )
+
+API.hs:139:16: warning: [-Wdeferred-type-errors]
+    • You require open sum type to contain the following element:
+          Int
+      However, given list can store elements only of the following types:
+          '[Bool, String]
+    • In the second argument of ‘($)’, namely ‘coolThrow (3 :: Int)’
+      In a stmt of a 'do' block: when False $ coolThrow (3 :: Int)
+      In the second argument of ‘($)’, namely
+        ‘do when False $ coolThrow (3 :: Int)
+            when True $ coolThrow False
+            coolPure ("bla" :: String)’
+    |
+139 |   when False $ coolThrow (3 :: Int)
+    |                ^^^^^^^^^^^^^^^^^^^^
+
+API.hs:141:3: warning: [-Wdeferred-type-errors]
+    • You require open sum type to contain the following element:
+          String
+      However, given list can store elements only of the following types:
+          es0
+    • In a stmt of a 'do' block: coolPure ("bla" :: String)
+      In the second argument of ‘($)’, namely
+        ‘do when False $ coolThrow (3 :: Int)
+            when True $ coolThrow False
+            coolPure ("bla" :: String)’
+      In the expression:
+        coolCatch
+          $ do when False $ coolThrow (3 :: Int)
+               when True $ coolThrow False
+               coolPure ("bla" :: String)
+    |
+141 |   coolPure ("bla" :: String)
+    |   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+-}

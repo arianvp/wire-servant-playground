@@ -98,7 +98,7 @@ data UserView = UserView { name :: String }
 
 data CreateUser = CreateUser { name :: String}
   deriving stock (Generic)
-  deriving anyclass (ToJSON)
+  deriving anyclass (FromJSON)
 
 data UserCreated = UserCreated { name :: String }
   deriving stock (Generic)
@@ -124,6 +124,52 @@ data Routes route = Routes
   }
   deriving (Generic)
 
+{-
+ - # Swagger should be easy to generate. Swagger actually already mandates
+ - that a status code is coupled to a single schema. So it seems to support our paradigm here :)
+ -
+ - paths:
+ -  /:
+ -    get:
+ -      responses:
+ -        200:
+ -          content:
+ -            application/json:
+ -              schema:
+ -                $ref: #UserView
+ -            application/xml:
+ -              schema:
+ -                $ref: #UserView
+ -        404:
+ -          content:
+ -            application/json:
+ -              schema:
+ -                $ref: #NotFound
+ -    put:
+ -      responses:
+ -        201:
+ -          content:
+ -            application/json:
+ -              schema:
+ -                $ref: #UserCreated
+ -            application/xml:
+ -              schema:
+ -                $ref: #UserCreated
+ -        401:
+ -          content:
+ -            application/json:
+ -              schema:
+ -                $ref: #UserUnauthorized
+ -
+ -
+ -
+ -}
+
+
+type OpenUnion = NS I
+
+app :: Application
+app = genericServe server
 
 server :: Routes AsServer
 server = Routes
@@ -131,13 +177,13 @@ server = Routes
   , put = put'
   }
   where
-    get' :: Int -> Handler (NS I '[UserView, NotFound])
+    get' :: Int -> Handler (OpenUnion '[UserView, NotFound])
     get' x = 
-      if False  -- not found
+      if even x  -- not found
       then pureNS $ NotFound "Didn't find it"
       else pureNS $ UserView "fisx"
 
-    put' ::  CreateUser -> Handler (NS I '[UserCreated, UserUnauthorized])
+    put' ::  CreateUser -> Handler (OpenUnion '[UserCreated, UserUnauthorized])
     put' (CreateUser name) = 
       if False -- unauthorized
       then pureNS $ UserUnauthorized "Nopeee!"

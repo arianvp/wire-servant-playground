@@ -15,7 +15,7 @@ import Data.Kind
 import Data.Proxy
 import GHC.TypeLits
 import Data.Maybe
-import Servant
+import Servant hiding (And)
 import Servant.Server
 import Servant.Server.Generic
 import Servant.API
@@ -147,13 +147,7 @@ server = Routes
 
 
 
-type Both cts a = (AllCTRender cts a, HasStatus a)
-
-
-class (AllCTRender cts a, HasStatus a) => HasAll cts a where
-instance (AllCTRender cts a, HasStatus a) => HasAll cts a where
-
-instance (AllMime cts, All (HasAll cts) returns, ReflectMethod method) => HasServer (Verb' method cts returns) context where
+instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method) => HasServer (Verb' method cts returns) context where
   type ServerT (Verb' method cts returns) m = m  (NS I returns)
 
   hoistServerWithContext _ _ nt s = nt s
@@ -162,7 +156,7 @@ instance (AllMime cts, All (HasAll cts) returns, ReflectMethod method) => HasSer
       method = reflectMethod (Proxy @method)
       route' env request respond =
         runAction action'  env request respond $ \ output -> do
-           let (status, b') = collapse_NS . cmap_NS (Proxy @(HasAll cts)) (\(I b) -> K (getStatus b, handleAcceptH (Proxy @cts) (AcceptHeader accH) b)) $ output
+           let (status, b') = collapse_NS . cmap_NS (Proxy @(AllCTRender cts `And` HasStatus)) (\(I b) -> K (getStatus b, handleAcceptH (Proxy @cts) (AcceptHeader accH) b)) $ output
            case b' of
              Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
              Just (contentT, body) ->

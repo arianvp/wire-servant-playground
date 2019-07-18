@@ -1,4 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
@@ -15,10 +16,9 @@ import Data.Kind
 import Data.Proxy
 import GHC.TypeLits
 import Data.Maybe
-import Servant hiding (And)
+import Servant hiding (And, Elem)
 import Servant.Server
 import Servant.Server.Generic
-import Servant.API
 import Servant.API.ContentTypes
 import Servant.API.Generic
 import Data.Aeson.Types
@@ -133,19 +133,22 @@ server = Routes
   where
     get' :: Int -> Handler (NS I '[UserView, NotFound])
     get' x = 
-      if False -- not found
-      -- Note we can get rid of the S $ S $ S $ Z boilerplate
-      -- with an IsMember typeclass
-      then pure $ S $ Z $ I $ NotFound "Didn't find it"
-      else pure $ Z $ I $ UserView "fisx"
+      if False  -- not found
+      then pureNS $ NotFound "Didn't find it"
+      else pureNS $ UserView "fisx"
 
     put' ::  CreateUser -> Handler (NS I '[UserCreated, UserUnauthorized])
     put' (CreateUser name) = 
       if False -- unauthorized
-      then pure $ S $ Z $ I $ UserUnauthorized "Nopeee!"
-      else pure $ Z $ I $ UserCreated name
+      then pureNS $ UserUnauthorized "Nopeee!"
+      else pureNS $ UserCreated name
 
 
+pureNS :: (Applicative f, IsMember x xs) => x -> f (NS I xs)
+pureNS = pure . inject'
+
+inject' :: IsMember x xs => x -> NS I xs
+inject' = inject . I
 
 instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method) => HasServer (Verb' method cts returns) context where
   type ServerT (Verb' method cts returns) m = m  (NS I returns)
@@ -166,4 +169,66 @@ instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMet
           accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
           action' = action `addMethodCheck` methodCheck method request
                            `addAcceptCheck` acceptCheck (Proxy @cts) accH
+
+
+
+
+
+
+
+
+
+
+
+
+
+------------------- Stuff stolen from WorldPeace but for generics-sop
+
+type IsMember (a :: u) (as :: [u]) = (CheckElemIsMember a as, UElem a as (RIndex a as))
+
+type family Contains (as :: [k]) (bs :: [k]) :: Constraint where
+  Contains '[] _ = ()
+  Contains (a ': as) bs = (IsMember a bs, Contains as bs)
+
+data Nat_ = S_ Nat_ | Z_
+
+
+type family RIndex (r :: k) (rs :: [k]) :: Nat_ where
+  RIndex r (r ': rs) = 'Z_
+  RIndex r (s ': rs) = 'S_ (RIndex r rs)
+
+type family Elem (x :: k) (xs :: [k]) :: Bool where
+    Elem _ '[]       = 'False
+    Elem x (x ': xs) = 'True
+    Elem x (y ': xs) = Elem x xs
+
+
+class i ~ RIndex a as => UElem (a :: k) (as :: [k]) (i :: Nat_) where
+  inject :: f a -> NS f as
+  match  :: NS f as -> Maybe (f a)
+
+instance UElem a (a ': as) 'Z_ where
+  inject x = Z x
+  match y = case y of
+    Z x -> Just x
+    _ -> Nothing
+
+instance ( RIndex a (b ': as) ~ ('S_ i) , UElem a as i) => UElem a (b ': as) ('S_ i) where
+  inject x = S (inject x)
+  match y = case y of
+    Z x -> Nothing
+    S y -> match y
+    
+
+
+type family CheckElemIsMember (a :: k) (as :: [k]) :: Constraint where
+    CheckElemIsMember a as =
+      If (Elem a as) (() :: Constraint) (TypeError (NoElementError a as))
+type NoElementError (r :: k) (rs :: [k]) =
+          'Text "You require open sum type to contain the following element:"
+    ':$$: 'Text "    " ':<>: 'ShowType r
+    ':$$: 'Text "However, given list can store elements only of the following types:"
+    ':$$: 'Text "    " ':<>: 'ShowType rs
+
+-- | This type family checks whether @a@ is 
 

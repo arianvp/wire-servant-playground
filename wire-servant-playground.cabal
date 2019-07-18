@@ -18,21 +18,27 @@ extra-source-files:  CHANGELOG.md
 
 library
   exposed-modules:
-    API,
-    Server,
-    Client
+    Scratchpad
   -- other-modules:
   -- other-extensions:
-  build-depends:       base ^>=4.11.1.0, 
+  default-extensions:
+    TypeFamilies,
+    DataKinds,
+    FlexibleInstances,
+    PolyKinds,
+    DeriveGeneric,
+    DeriveAnyClass,
+    DerivingStrategies,
+    DuplicateRecordFields,
+    ConstraintKinds,
+    TypeOperators,
+    ScopedTypeVariables,
+    MultiParamTypeClasses,
+    GADTs
+  build-depends:       base,
                        servant ^>=0.16,
-                       servant-server, servant-checked-exceptions, aeson, http-types
+                       servant-server, servant-checked-exceptions-core, aeson, http-types, world-peace, sop-core, http-api-data, wai, network, http-media, bytestring, string-conversions
   hs-source-dirs:      src
   default-language:    Haskell2010
 
-executable wire-servant-playground
-  main-is:             Main.hs
-  -- other-modules:
-  -- other-extensions:
-  build-depends:       base ^>=4.11.1.0, wire-servant-playground, warp
-  hs-source-dirs:      app
-  default-language:    Haskell2010
+

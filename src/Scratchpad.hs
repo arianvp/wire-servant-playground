@@ -4,11 +4,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DerivingVia #-}
 -- | "Servant"
-module Scratchpad
-( module Servant
-, module Servant.Server
-, module Data.WorldPeace
-) where
+module Scratchpad where
 
 
 import           Data.String.Conversions
@@ -21,11 +17,11 @@ import GHC.TypeLits
 import Data.Maybe
 import Servant
 import Servant.Server
+import Servant.Server.Generic
 import Servant.API
 import Servant.API.ContentTypes
 import Servant.API.Generic
 import Data.Aeson.Types
-import Data.WorldPeace hiding (Nat)
 import qualified Data.ByteString                            as B
 
 import Data.SOP.NS
@@ -76,6 +72,7 @@ import           Servant.Server.Internal.ServerError
 
 
 
+
 newtype Status' n a = Status' a
 
 class HasStatus a where
@@ -99,6 +96,10 @@ data UserView = UserView { name :: String }
   deriving anyclass (ToJSON)
   deriving HasStatus via (Status' 200 UserView)
 
+data CreateUser = CreateUser { name :: String}
+  deriving stock (Generic)
+  deriving anyclass (ToJSON)
+
 data UserCreated = UserCreated { name :: String }
   deriving stock (Generic)
   deriving anyclass (ToJSON)
@@ -118,10 +119,31 @@ type Put' = Verb' PUT
 data Routes route = Routes
   { get :: route :- Capture "id" Int 
          :> Get' '[JSON] '[ UserView , NotFound ]
-  , put :: route :- ReqBody '[JSON] Int 
+  , put :: route :- ReqBody '[JSON] CreateUser 
          :> Put' '[JSON] '[ UserCreated, UserUnauthorized ]
   }
   deriving (Generic)
+
+
+server :: Routes AsServer
+server = Routes
+  { get = get'
+  , put = put'
+  }
+  where
+    get' :: Int -> Handler (NS I '[UserView, NotFound])
+    get' x = 
+      if False -- not found
+      -- Note we can get rid of the S $ S $ S $ Z boilerplate
+      -- with an IsMember typeclass
+      then pure $ S $ Z $ I $ NotFound "Didn't find it"
+      else pure $ Z $ I $ UserView "fisx"
+
+    put' ::  CreateUser -> Handler (NS I '[UserCreated, UserUnauthorized])
+    put' (CreateUser name) = 
+      if False -- unauthorized
+      then pure $ S $ Z $ I $ UserUnauthorized "Nopeee!"
+      else pure $ Z $ I $ UserCreated name
 
 
 

@@ -5,6 +5,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
 -- | "Servant"
 module Scratchpad where
@@ -13,14 +14,19 @@ module Scratchpad where
 import           Data.String.Conversions
                  (cs)
 import Data.Kind
+import Control.Lens (at, (&), (.~), (?~), (<.), (.>), _Just, set)
+import Data.Swagger
 import Data.Proxy
 import GHC.TypeLits
 import Data.Maybe
 import Servant hiding (And, Elem)
+import Servant.Swagger
+import Servant.Swagger.Internal
 import Servant.Server.Generic
 import Servant.API.ContentTypes
 import Servant.API.Generic
 import Data.Aeson.Types
+import Data.Swagger.Declare
 
 import Data.SOP.NS
 import Data.SOP.Constraint
@@ -41,35 +47,35 @@ import           Servant.Server.Internal
 
 
 newtype WithStatus n a = WithStatus a
-  deriving newtype (FromJSON, ToJSON)
+  deriving newtype (FromJSON, ToJSON, ToSchema)
   deriving stock (Functor)
 
 -- TODO: this typeclass can probably go
 class HasStatus a where
-  getStatus :: a -> Status
+  getStatus :: a -> Int
 
 instance forall n a. KnownNat n => HasStatus (WithStatus n a) where
-  getStatus _ = toEnum $ fromInteger $  natVal (Proxy  @n)
+  getStatus _ = fromInteger $  natVal (Proxy  @n)
   
 data NotFound = NotFound { msg :: String }
   deriving stock (Generic)
-  deriving anyclass (ToJSON)
+  deriving anyclass (ToJSON, ToSchema)
 
 data UserUnauthorized = UserUnauthorized { msg :: String } 
   deriving stock (Generic)
-  deriving anyclass (ToJSON)
+  deriving anyclass (ToJSON, ToSchema)
 
 data UserView = UserView { name :: String }
   deriving stock (Generic)
-  deriving anyclass (ToJSON)
+  deriving anyclass (ToJSON, ToSchema)
 
 data CreateUser = CreateUser { name :: String}
   deriving stock (Generic)
-  deriving anyclass (FromJSON)
+  deriving anyclass (FromJSON, ToSchema)
 
 data UserCreated = UserCreated { name :: String }
   deriving stock (Generic)
-  deriving anyclass (ToJSON)
+  deriving anyclass (ToJSON, ToSchema)
 
 
 
@@ -79,54 +85,23 @@ type Get' = Verb' GET
 type Put' = Verb' PUT
 
 data Routes route = Routes
-  { get :: route :- Capture "id" Int 
+  { get :: route :- Description "gets a user" :> Capture' '[Description "The id to use"] "id" Int 
         :> Get' '[JSON] '[ WithStatus 200 UserView , WithStatus 404 NotFound ]
-  , put :: route :- ReqBody '[JSON] CreateUser 
+  , put :: route :- Description "Creates a user" :> ReqBody' '[Description "The user you want to create"] '[JSON] CreateUser 
         :> Put' '[JSON] '[ WithStatus 201 UserCreated, WithStatus 401 UserUnauthorized ]
   }
   deriving (Generic)
 
-{-
- - # Swagger should be easy to generate. Swagger actually already mandates
- - that a status code is coupled to a single schema. So it seems to support our paradigm here :)
- -
- - paths:
- -  /:
- -    get:
- -      responses:
- -        200:
- -          content:
- -            application/json:
- -              schema:
- -                $ref: #UserView
- -            application/xml:
- -              schema:
- -                $ref: #UserView
- -        404:
- -          content:
- -            application/json:
- -              schema:
- -                $ref: #NotFound
- -    put:
- -      responses:
- -        201:
- -          content:
- -            application/json:
- -              schema:
- -                $ref: #UserCreated
- -            application/xml:
- -              schema:
- -                $ref: #UserCreated
- -        401:
- -          content:
- -            application/json:
- -              schema:
- -                $ref: #UserUnauthorized
- -
- -}
 
 
 type OpenUnion = NS I
+
+
+api :: Proxy (ToServantApi Routes)
+api = genericApi (Proxy @Routes)
+
+swagger :: Swagger
+swagger = toSwagger api
 
 app :: Application
 app = genericServe server
@@ -172,7 +147,7 @@ instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMet
       method = reflectMethod (Proxy @method)
       route' env request respond =
         runAction action'  env request respond $ \ output -> do
-           let (status, b') = collapse_NS . cmap_NS (Proxy @(AllCTRender cts `And` HasStatus)) (\(I b) -> K (getStatus b, handleAcceptH (Proxy @cts) (AcceptHeader accH) b)) $ output
+           let (status, b') = collapse_NS . cmap_NS (Proxy @(AllCTRender cts `And` HasStatus)) (\(I b) -> K (toEnum $ getStatus b, handleAcceptH (Proxy @cts) (AcceptHeader accH) b)) $ output
            case b' of
              Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
              Just (contentT, body) ->
@@ -183,11 +158,102 @@ instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMet
           action' = action `addMethodCheck` methodCheck method request
                            `addAcceptCheck` acceptCheck (Proxy @cts) accH
 
+type EmptyUnionError =
+          'Text "Your endpoint defines no return types, which is an error"
 
 
+-- somehow need to loop through the list of returns ( ? instances with recursion?)
+instance (TypeError EmptyUnionError) => HasSwagger (Verb' method cts '[]) where
+
+instance 
+  ( AllAccept cts
+  , SwaggerMethod method
+  , ToSchema x
+  , HasStatus x
+  ) => HasSwagger (Verb' method cts (x ': '[])) where
+  toSwagger Proxy = 
+    let 
+      -- TODO let getStatus take a proxy
+      status = getStatus (undefined :: x)
+      responseContentTypes = allContentType (Proxy @cts)
+      (defs, res) = runDeclare (declareSchemaRef (Proxy @x)) mempty
+    in 
+      mempty & paths.at "/" ?~
+        ( mempty & swaggerMethod (Proxy @method) ?~ (mempty 
+          & produces ?~ MimeList responseContentTypes
+          & at status ?~ Inline (mempty & schema ?~ res)
+        )) & definitions .~ defs
 
 
+instance  {-# OVERLAPPABLE #-}
+  forall cts method x xs.
+  ( AllAccept cts
+  , SwaggerMethod method
+  , ToSchema x
+  , HasStatus x
+  , HasSwagger (Verb' method cts xs)
+  ) => HasSwagger (Verb' method cts (x ': xs)) where
+  toSwagger Proxy = 
+    let 
+      -- TODO let getStatus take a proxy
+      status = getStatus (undefined :: x)
+      responseContentTypes = allContentType (Proxy @cts)
+      (defs, res) = runDeclare (declareSchemaRef (Proxy @x)) mempty
+    in
 
+      -- TODO: This is not the monoid we think it is. it overrides whatever is on the left with
+      -- whatever is on the right. So we're not actually adding multiple status codes
+      (mempty & paths.at "/" ?~
+        ( mempty & swaggerMethod (Proxy @method) ?~ (mempty 
+          & produces ?~ MimeList responseContentTypes
+          & at status ?~ Inline (mempty & schema ?~ res)
+        )) & definitions .~ defs) `mappend` toSwagger (Proxy @(Verb' method cts xs)) 
+      -- Lens magic. idk
+      {-setResponseFor (paths.(at "/"). _Just . swaggerMethod (Proxy @method) .  _Just . _) 
+        status 
+        (declareResponse (Proxy @x))
+        (toSwagger (Proxy @(Verb' method cts xs)))
+        -}
+    {- setResponseFor (swaggerMethod (Proxy @method)) (getStatus (undefined :: x)) _ 
+     -}
+
+{-
+   - that a status code is coupled to a single schema. So it seems to support our paradigm here :)
+   -
+   - paths:
+   -  /:
+   -    get:
+   -      responses:
+   -        200:
+   -          content:
+   -            application/json:
+   -              schema:
+   -                $ref: #UserView
+   -            application/xml:
+   -              schema:
+   -                $ref: #UserView
+   -        404:
+   -          content:
+   -            application/json:
+   -              schema:
+   -                $ref: #NotFound
+   -    put:
+   -      responses:
+   -        201:
+   -          content:
+   -            application/json:
+   -              schema:
+   -                $ref: #UserCreated
+   -            application/xml:
+   -              schema:
+   -                $ref: #UserCreated
+   -        401:
+   -          content:
+   -            application/json:
+   -              schema:
+   -                $ref: #UserUnauthorized
+   -
+   -}
 
 
 ------------------- Stuff stolen from WorldPeace but for generics-sop

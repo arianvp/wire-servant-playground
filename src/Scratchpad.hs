@@ -40,10 +40,9 @@ import           Servant.API.ContentTypes
 import           Servant.Server.Internal
 
 
-
-
 newtype WithStatus n a = WithStatus a
   deriving newtype (FromJSON, ToJSON)
+  deriving stock (Functor)
 
 -- TODO: this typeclass can probably go
 class HasStatus a where
@@ -135,6 +134,9 @@ app = genericServe server
 -- TODO:
 -- We want to have the functional dependency that ret -> status within a handler.
 -- so  pureNS ret should infer status. so that we don't need to manually annotate
+-- I'm not sure if it's worth it though
+--
+-- Servant.API.ResponseHeaders does something similar
 server :: Routes AsServer
 server = Routes
   { get = get'

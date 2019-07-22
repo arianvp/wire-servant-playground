@@ -17,6 +17,7 @@ category:            Web
 extra-source-files:  CHANGELOG.md
 
 library
+  ghc-options: -Wunused-imports
   exposed-modules:
     Scratchpad
   -- other-modules:
@@ -37,7 +38,7 @@ library
     GADTs
   build-depends:       base,
                        servant ^>=0.16,
-                       servant-server, servant-checked-exceptions-core, aeson, http-types, world-peace, sop-core, http-api-data, wai, network, http-media, bytestring, string-conversions
+                       servant-server, servant-checked-exceptions-core, aeson, http-types, world-peace, sop-core, http-api-data, wai, network, http-media, bytestring, string-conversions, swagger2, servant-swagger
   hs-source-dirs:      src
   default-language:    Haskell2010
 

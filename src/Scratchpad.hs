@@ -1,6 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
@@ -11,66 +12,32 @@ module Scratchpad where
 
 import           Data.String.Conversions
                  (cs)
-import qualified Data.ByteString                            as B
-import Data.Monoid (First(..))
 import Data.Kind
-import Data.Coerce
 import Data.Proxy
 import GHC.TypeLits
 import Data.Maybe
 import Servant hiding (And, Elem)
-import Servant.Server
 import Servant.Server.Generic
 import Servant.API.ContentTypes
 import Servant.API.Generic
 import Data.Aeson.Types
-import qualified Data.ByteString                            as B
 
 import Data.SOP.NS
-import Data.SOP.Classes
 import Data.SOP.Constraint
 import Data.SOP.BasicFunctors
-import           GHC.TypeLits
-                 (KnownNat, KnownSymbol, natVal, symbolVal)
-import qualified Network.HTTP.Media                         as NHM
 import           Network.HTTP.Types                         hiding
                  (Header, ResponseHeaders)
-import           Network.Socket
-                 (SockAddr)
-import           Network.Wai
-                 (Application, Request, httpVersion, isSecure, lazyRequestBody,
-                 rawQueryString, remoteHost, requestBody, requestHeaders,
-                 requestMethod, responseLBS, responseStream, vault)
-import           Servant.API
-                 ((:<|>) (..), (:>), Accept (..), BasicAuth, Capture',
-                 CaptureAll, Description, EmptyAPI, FramingRender (..),
-                 FramingUnrender (..), FromSourceIO (..), Header', If,
-                 IsSecure (..), QueryFlag, QueryParam', QueryParams, Raw,
-                 ReflectMethod (reflectMethod), RemoteHost, ReqBody',
-                 SBool (..), SBoolI (..), SourceIO, Stream, StreamBody',
-                 Summary, ToSourceIO (..), Vault, Verb, WithNamedContext)
+import           Network.Wai (Application, requestHeaders, responseLBS)
 import           Servant.API.ContentTypes
-                 (AcceptHeader (..), AllCTRender (..), AllCTUnrender (..),
-                 AllMime, MimeRender (..), MimeUnrender (..), canHandleAcceptH)
-import           Servant.API.Modifiers
-                 (FoldLenient, FoldRequired, RequestArgument,
-                 unfoldRequestArgument)
-import           Servant.API.ResponseHeaders
-                 (GetHeaders, Headers, getHeaders, getResponse)
-import qualified Servant.Types.SourceT                      as S
-import           Web.HttpApiData
-                 (FromHttpApiData, parseHeader, parseQueryParam,
-                 parseUrlPieceMaybe, parseUrlPieces, parseUrlPiece)
+                 (AcceptHeader (..), AllCTRender (..)) 
+
+-- TODO I will need these
+{-import           Servant.API.ResponseHeaders
+                (GetHeaders, Headers, getHeaders, getResponse)
+-}
 
 
 import           Servant.Server.Internal
-import           Servant.Server.Internal.Delayed
-import           Servant.Server.Internal.DelayedIO
-import           Servant.Server.Internal.Handler
-import           Servant.Server.Internal.Router
-import           Servant.Server.Internal.RouteResult
-import           Servant.Server.Internal.RoutingApplication
-import           Servant.Server.Internal.ServerError
 
 
 
@@ -106,11 +73,7 @@ data UserCreated = UserCreated { name :: String }
   deriving anyclass (ToJSON)
 
 
-  
 
-
--- Currently, all return types must implement the same encodings.
--- I think this is a sane limitation
 data Verb' (method :: StdMethod) (contentTypes :: [*]) (returns :: [*])
 
 type Get' = Verb' GET
@@ -169,6 +132,9 @@ type OpenUnion = NS I
 app :: Application
 app = genericServe server
 
+-- TODO:
+-- We want to have the functional dependency that ret -> status within a handler.
+-- so  pureNS ret should infer status. so that we don't need to manually annotate
 server :: Routes AsServer
 server = Routes
   { get = get'
@@ -178,7 +144,6 @@ server = Routes
     get' :: Int -> Handler (OpenUnion '[WithStatus 200 UserView, WithStatus 404 NotFound])
     get' x = 
       if even x  -- not found
-      then throwIO erro404
       then pureNS . WithStatus @404 $ NotFound "Didn't find it"
       else pureNS . WithStatus @200 $ UserView "yo"
 
@@ -195,6 +160,7 @@ pureNS = pure . inject'
 inject' :: IsMember x xs => x -> NS I xs
 inject' = inject . I
 
+-- TODO: Support the 'Headers' newtype wrapper from servant as well
 instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method) => HasServer (Verb' method cts returns) context where
   type ServerT (Verb' method cts returns) m = m  (NS I returns)
 

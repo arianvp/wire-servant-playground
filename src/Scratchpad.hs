@@ -1,5 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
@@ -13,6 +14,7 @@ import           Data.String.Conversions
 import qualified Data.ByteString                            as B
 import Data.Monoid (First(..))
 import Data.Kind
+import Data.Coerce
 import Data.Proxy
 import GHC.TypeLits
 import Data.Maybe
@@ -73,28 +75,27 @@ import           Servant.Server.Internal.ServerError
 
 
 
-newtype Status' n a = Status' a
+newtype WithStatus n a = WithStatus a
+  deriving newtype (FromJSON, ToJSON)
 
+-- TODO: this typeclass can probably go
 class HasStatus a where
   getStatus :: a -> Status
 
-instance forall n a. KnownNat n => HasStatus (Status' n a) where
+instance forall n a. KnownNat n => HasStatus (WithStatus n a) where
   getStatus _ = toEnum $ fromInteger $  natVal (Proxy  @n)
   
 data NotFound = NotFound { msg :: String }
   deriving stock (Generic)
   deriving anyclass (ToJSON)
-  deriving HasStatus via (Status' 404 NotFound)
 
 data UserUnauthorized = UserUnauthorized { msg :: String } 
   deriving stock (Generic)
   deriving anyclass (ToJSON)
-  deriving HasStatus via (Status' 401 UserUnauthorized)
 
 data UserView = UserView { name :: String }
   deriving stock (Generic)
   deriving anyclass (ToJSON)
-  deriving HasStatus via (Status' 200 UserView)
 
 data CreateUser = CreateUser { name :: String}
   deriving stock (Generic)
@@ -103,7 +104,6 @@ data CreateUser = CreateUser { name :: String}
 data UserCreated = UserCreated { name :: String }
   deriving stock (Generic)
   deriving anyclass (ToJSON)
-  deriving HasStatus via (Status' 201 UserCreated)
 
 
   
@@ -118,9 +118,9 @@ type Put' = Verb' PUT
 
 data Routes route = Routes
   { get :: route :- Capture "id" Int 
-         :> Get' '[JSON] '[ UserView , NotFound ]
+        :> Get' '[JSON] '[ WithStatus 200 UserView , WithStatus 404 NotFound ]
   , put :: route :- ReqBody '[JSON] CreateUser 
-         :> Put' '[JSON] '[ UserCreated, UserUnauthorized ]
+        :> Put' '[JSON] '[ WithStatus 201 UserCreated, WithStatus 401 UserUnauthorized ]
   }
   deriving (Generic)
 
@@ -161,8 +161,6 @@ data Routes route = Routes
  -              schema:
  -                $ref: #UserUnauthorized
  -
- -
- -
  -}
 
 
@@ -177,17 +175,18 @@ server = Routes
   , put = put'
   }
   where
-    get' :: Int -> Handler (OpenUnion '[UserView, NotFound])
+    get' :: Int -> Handler (OpenUnion '[WithStatus 200 UserView, WithStatus 404 NotFound])
     get' x = 
       if even x  -- not found
-      then pureNS $ NotFound "Didn't find it"
-      else pureNS $ UserView "fisx"
+      then throwIO erro404
+      then pureNS . WithStatus @404 $ NotFound "Didn't find it"
+      else pureNS . WithStatus @200 $ UserView "yo"
 
-    put' ::  CreateUser -> Handler (OpenUnion '[UserCreated, UserUnauthorized])
+    put' ::  CreateUser -> Handler (OpenUnion '[WithStatus 201 UserCreated, WithStatus 401 UserUnauthorized])
     put' (CreateUser name) = 
       if False -- unauthorized
-      then pureNS $ UserUnauthorized "Nopeee!"
-      else pureNS $ UserCreated name
+      then pureNS . WithStatus @401 $  UserUnauthorized "Nopeee!"
+      else pureNS . WithStatus @201 $ UserCreated name
 
 
 pureNS :: (Applicative f, IsMember x xs) => x -> f (NS I xs)
@@ -215,11 +214,6 @@ instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMet
           accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
           action' = action `addMethodCheck` methodCheck method request
                            `addAcceptCheck` acceptCheck (Proxy @cts) accH
-
-
-
-
-
 
 
 
@@ -271,10 +265,10 @@ type family CheckElemIsMember (a :: k) (as :: [k]) :: Constraint where
     CheckElemIsMember a as =
       If (Elem a as) (() :: Constraint) (TypeError (NoElementError a as))
 type NoElementError (r :: k) (rs :: [k]) =
-          'Text "You require open sum type to contain the following element:"
-    ':$$: 'Text "    " ':<>: 'ShowType r
-    ':$$: 'Text "However, given list can store elements only of the following types:"
+          'Text "Expected one of:"
     ':$$: 'Text "    " ':<>: 'ShowType rs
+    ':$$: 'Text "But got:"
+    ':$$: 'Text "    " ':<>: 'ShowType r
 
 -- | This type family checks whether @a@ is 
 

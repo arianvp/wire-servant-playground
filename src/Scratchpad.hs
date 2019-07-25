@@ -50,6 +50,9 @@ import           Servant.API.ContentTypes
 import           Servant.Server.Internal
 
 
+newtype AsResource status contentTypes headers a = AsResource a
+ 
+
 -- TODO: i guess this is so we can have default statusses?  i also guess i'm against it, but i'm not sure.
 newtype WithStatus n a = WithStatus a
   deriving newtype (FromJSON, ToJSON)
@@ -167,13 +170,15 @@ instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMet
 type EmptyUnionError =
           'Text "Your endpoint defines no return types, which is an error"
 
-
 handler :: Server (UVerb 'GET [Resource 201 '[] '[JSON] Bool, Resource 200 '[] '[JSON]  String])
 handler = pure $ injectResourceTypeFactoryBean (Proxy @(Resource 201 '[] '[JSON] Bool)) True
 
 data UVerb (method :: StdMethod) (resources :: [k {- Resource -} ])
 
 data Resource (statusCode :: Nat) (headers :: [Symbol]) (contentTypes :: [*]) (return :: *)
+
+
+
 
 class IsResource resource where
   type ResourceStatus       resource :: Nat

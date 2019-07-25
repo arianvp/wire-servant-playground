@@ -46,6 +46,7 @@ import           Servant.API.ContentTypes
 import           Servant.Server.Internal
 
 
+-- TODO: i guess this is so we can have default statusses?  i also guess i'm against it, but i'm not sure.
 newtype WithStatus n a = WithStatus a
   deriving newtype (FromJSON, ToJSON, ToSchema)
   deriving stock (Functor)
@@ -78,8 +79,16 @@ data UserCreated = UserCreated { name :: String }
   deriving anyclass (ToJSON, ToSchema)
 
 
-
+-- | TODO:
+--
+-- data Resource (statusCode :: Nat) (headers :: [Symbol]) (contentTypes :: [*]) (returns :: *)
+-- data Verb' (method :: StdMethod) (resources :: [k {- Resource -} ])
+--
+-- this is not going to be trivial, but possible.
+--
+-- rename Verb' to UVerb?
 data Verb' (method :: StdMethod) (contentTypes :: [*]) (returns :: [*])
+
 
 type Get' = Verb' GET
 type Put' = Verb' PUT
@@ -139,7 +148,7 @@ inject' = inject . I
 
 -- TODO: Support the 'Headers' newtype wrapper from servant as well
 instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method) => HasServer (Verb' method cts returns) context where
-  type ServerT (Verb' method cts returns) m = m  (NS I returns)
+  type ServerT (Verb' method cts returns) m = m (NS I returns)
 
   hoistServerWithContext _ _ nt s = nt s
   route Proxy ctx action =  leafRouter route'
@@ -217,9 +226,7 @@ instance  {-# OVERLAPPABLE #-}
     {- setResponseFor (swaggerMethod (Proxy @method)) (getStatus (undefined :: x)) _
      -}
 
-{-
-   - that a status code is coupled to a single schema. So it seems to support our paradigm here :)
-   -
+{- some swagger structure for good measure
    - paths:
    -  /:
    -    get:
@@ -267,6 +274,7 @@ type family Contains (as :: [k]) (bs :: [k]) :: Constraint where
 data Nat_ = S_ Nat_ | Z_
 
 
+-- TODO: we probably can make do without this.
 type family RIndex (r :: k) (rs :: [k]) :: Nat_ where
   RIndex r (r ': rs) = 'Z_
   RIndex r (s ': rs) = 'S_ (RIndex r rs)
@@ -295,14 +303,16 @@ instance ( RIndex a (b ': as) ~ ('S_ i) , UElem a as i) => UElem a (b ': as) ('S
 
 
 
+-- | This type family checks whether @a@ is in list.
 type family CheckElemIsMember (a :: k) (as :: [k]) :: Constraint where
     CheckElemIsMember a as =
       If (Elem a as) (() :: Constraint) (TypeError (NoElementError a as))
+
 type NoElementError (r :: k) (rs :: [k]) =
           'Text "Expected one of:"
     ':$$: 'Text "    " ':<>: 'ShowType rs
     ':$$: 'Text "But got:"
     ':$$: 'Text "    " ':<>: 'ShowType r
 
--- | This type family checks whether @a@ is
 
+-- | TODO: steal the Nub list from servant-swagger(?)

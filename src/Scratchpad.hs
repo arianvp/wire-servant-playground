@@ -139,6 +139,10 @@ pureNS = pure . inject'
 inject' :: IsMember x xs => x -> NS I xs
 inject' = inject . I
 
+
+injectResourceTypeFactoryBean :: IsMember x xs => Proxy x -> ResourceType x -> NS GetResourceType xs
+injectResourceTypeFactoryBean = undefined
+
 -- TODO: Support the 'Headers' newtype wrapper from servant as well
 instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method) => HasServer (Verb' method cts returns) context where
   type ServerT (Verb' method cts returns) m = m (NS I returns)
@@ -164,9 +168,12 @@ type EmptyUnionError =
           'Text "Your endpoint defines no return types, which is an error"
 
 
+handler :: Server (UVerb 'GET [Resource 201 '[] '[JSON] Bool, Resource 200 '[] '[JSON]  String])
+handler = pure $ injectResourceTypeFactoryBean (Proxy @(Resource 201 '[] '[JSON] Bool)) True
+
 data UVerb (method :: StdMethod) (resources :: [k {- Resource -} ])
 
-data Resource (statusCode :: Nat) (headers :: [Symbol]) (contentTypes :: [*]) (returns :: *)
+data Resource (statusCode :: Nat) (headers :: [Symbol]) (contentTypes :: [*]) (return :: *)
 
 class IsResource resource where
   type ResourceStatus       resource :: Nat
@@ -177,6 +184,11 @@ class IsResource resource where
 -- TODO: (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method)
 -- type IsGoodResource resource = (IsResource resource, AllMime (ResourceContentTypes resource), ...)
 
+instance IsResource (Resource statusCode headers contentTypes return) where
+  type ResourceStatus (Resource statusCode headers contentTypes return)  =  statusCode
+--  type ResourceContentTypes resource :: '[*]
+  type ResourceType (Resource statusCode headers contentTypes return)  =  return
+  
 
 data GetResourceType :: k -> * where
   MkGetResourceType :: ResourceType resource -> GetResourceType resource

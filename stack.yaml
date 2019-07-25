@@ -1,0 +1,5 @@
+resolver: lts-13.27
+# lts-12.10 doesn't support deriving-via, so it won't work here.
+
+packages:
+  - .

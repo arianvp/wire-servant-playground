@@ -1,4 +1,6 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs #-}
@@ -8,9 +10,11 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
 -- | "Servant"
+{-# OPTIONS_GHC -Wno-unused-imports -Wno-name-shadowing #-}
 module Scratchpad where
 
 
+import Prelude
 import           Data.String.Conversions
                  (cs)
 import Data.Kind
@@ -48,12 +52,12 @@ import           Servant.Server.Internal
 
 -- TODO: i guess this is so we can have default statusses?  i also guess i'm against it, but i'm not sure.
 newtype WithStatus n a = WithStatus a
-  deriving newtype (FromJSON, ToJSON, ToSchema)
+  deriving newtype (FromJSON, ToJSON)
   deriving stock (Functor)
 
 -- TODO: this typeclass can probably go
 class HasStatus a where
-  getStatus :: a -> Int
+  getStatus :: a -> Int  -- TODO: should be @proxy a@, not @a@
 
 instance forall n a. KnownNat n => HasStatus (WithStatus n a) where
   getStatus _ = fromInteger $  natVal (Proxy  @n)
@@ -79,19 +83,11 @@ data UserCreated = UserCreated { name :: String }
   deriving anyclass (ToJSON, ToSchema)
 
 
--- | TODO:
---
--- data Resource (statusCode :: Nat) (headers :: [Symbol]) (contentTypes :: [*]) (returns :: *)
--- data Verb' (method :: StdMethod) (resources :: [k {- Resource -} ])
---
--- this is not going to be trivial, but possible.
---
--- rename Verb' to UVerb?
 data Verb' (method :: StdMethod) (contentTypes :: [*]) (returns :: [*])
 
 
-type Get' = Verb' GET
-type Put' = Verb' PUT
+type Get' = Verb' 'GET
+type Put' = Verb' 'PUT
 
 data Routes route = Routes
   { get :: route :- Description "gets a user" :> Capture' '[Description "The id to use"] "id" Int
@@ -108,9 +104,6 @@ type OpenUnion = NS I
 
 api :: Proxy (ToServantApi Routes)
 api = genericApi (Proxy @Routes)
-
-swagger :: Swagger
-swagger = toSwagger api
 
 app :: Application
 app = genericServe server
@@ -151,7 +144,7 @@ instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMet
   type ServerT (Verb' method cts returns) m = m (NS I returns)
 
   hoistServerWithContext _ _ nt s = nt s
-  route Proxy ctx action =  leafRouter route'
+  route Proxy _ctx action =  leafRouter route'
     where
       method = reflectMethod (Proxy @method)
       route' env request respond =
@@ -171,8 +164,36 @@ type EmptyUnionError =
           'Text "Your endpoint defines no return types, which is an error"
 
 
+data UVerb (method :: StdMethod) (resources :: [k {- Resource -} ])
+
+data Resource (statusCode :: Nat) (headers :: [Symbol]) (contentTypes :: [*]) (returns :: *)
+
+class IsResource resource where
+  type ResourceStatus       resource :: Nat
+--  type ResourceContentTypes resource :: '[*]
+  type ResourceType         resource :: *
+
+-- TODO: better name.
+-- TODO: (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method)
+-- type IsGoodResource resource = (IsResource resource, AllMime (ResourceContentTypes resource), ...)
+
+
+data GetResourceType :: k -> * where
+  MkGetResourceType :: ResourceType resource -> GetResourceType resource
+
+
+instance {- (All IsGoodResource resource) => -} HasServer (UVerb method resources) context where
+  type ServerT (UVerb method resources) m = m (NS GetResourceType resources)
+
+  hoistServerWithContext _ _ nt s = nt s
+  route = undefined
+
+
+
+
 -- somehow need to loop through the list of returns ( ? instances with recursion?)
 instance (TypeError EmptyUnionError) => HasSwagger (Verb' method cts '[]) where
+  toSwagger = undefined
 
 instance
   ( AllAccept cts
@@ -298,7 +319,7 @@ instance UElem a (a ': as) 'Z_ where
 instance ( RIndex a (b ': as) ~ ('S_ i) , UElem a as i) => UElem a (b ': as) ('S_ i) where
   inject x = S (inject x)
   match y = case y of
-    Z x -> Nothing
+    Z _ -> Nothing
     S y -> match y
 
 

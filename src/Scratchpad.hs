@@ -35,7 +35,7 @@ import           Network.HTTP.Types                         hiding
                  (Header, ResponseHeaders)
 import           Network.Wai (Application, requestHeaders, responseLBS)
 import           Servant.API.ContentTypes
-                 (AcceptHeader (..), AllCTRender (..)) 
+                 (AcceptHeader (..), AllCTRender (..))
 
 -- TODO I will need these
 {-import           Servant.API.ResponseHeaders
@@ -56,12 +56,12 @@ class HasStatus a where
 
 instance forall n a. KnownNat n => HasStatus (WithStatus n a) where
   getStatus _ = fromInteger $  natVal (Proxy  @n)
-  
+
 data NotFound = NotFound { msg :: String }
   deriving stock (Generic)
   deriving anyclass (ToJSON, ToSchema)
 
-data UserUnauthorized = UserUnauthorized { msg :: String } 
+data UserUnauthorized = UserUnauthorized { msg :: String }
   deriving stock (Generic)
   deriving anyclass (ToJSON, ToSchema)
 
@@ -85,9 +85,9 @@ type Get' = Verb' GET
 type Put' = Verb' PUT
 
 data Routes route = Routes
-  { get :: route :- Description "gets a user" :> Capture' '[Description "The id to use"] "id" Int 
+  { get :: route :- Description "gets a user" :> Capture' '[Description "The id to use"] "id" Int
         :> Get' '[JSON] '[ WithStatus 200 UserView , WithStatus 404 NotFound ]
-  , put :: route :- Description "Creates a user" :> ReqBody' '[Description "The user you want to create"] '[JSON] CreateUser 
+  , put :: route :- Description "Creates a user" :> ReqBody' '[Description "The user you want to create"] '[JSON] CreateUser
         :> Put' '[JSON] '[ WithStatus 201 UserCreated, WithStatus 401 UserUnauthorized ]
   }
   deriving (Generic)
@@ -119,13 +119,13 @@ server = Routes
   }
   where
     get' :: Int -> Handler (OpenUnion '[WithStatus 200 UserView, WithStatus 404 NotFound])
-    get' x = 
+    get' x =
       if even x  -- not found
       then pureNS . WithStatus @404 $ NotFound "Didn't find it"
       else pureNS . WithStatus @200 $ UserView "yo"
 
     put' ::  CreateUser -> Handler (OpenUnion '[WithStatus 201 UserCreated, WithStatus 401 UserUnauthorized])
-    put' (CreateUser name) = 
+    put' (CreateUser name) =
       if False -- unauthorized
       then pureNS . WithStatus @401 $  UserUnauthorized "Nopeee!"
       else pureNS . WithStatus @201 $ UserCreated name
@@ -165,21 +165,21 @@ type EmptyUnionError =
 -- somehow need to loop through the list of returns ( ? instances with recursion?)
 instance (TypeError EmptyUnionError) => HasSwagger (Verb' method cts '[]) where
 
-instance 
+instance
   ( AllAccept cts
   , SwaggerMethod method
   , ToSchema x
   , HasStatus x
   ) => HasSwagger (Verb' method cts (x ': '[])) where
-  toSwagger Proxy = 
-    let 
+  toSwagger Proxy =
+    let
       -- TODO let getStatus take a proxy
       status = getStatus (undefined :: x)
       responseContentTypes = allContentType (Proxy @cts)
       (defs, res) = runDeclare (declareSchemaRef (Proxy @x)) mempty
-    in 
+    in
       mempty & paths.at "/" ?~
-        ( mempty & swaggerMethod (Proxy @method) ?~ (mempty 
+        ( mempty & swaggerMethod (Proxy @method) ?~ (mempty
           & produces ?~ MimeList responseContentTypes
           & at status ?~ Inline (mempty & schema ?~ res)
         )) & definitions .~ defs
@@ -193,8 +193,8 @@ instance  {-# OVERLAPPABLE #-}
   , HasStatus x
   , HasSwagger (Verb' method cts xs)
   ) => HasSwagger (Verb' method cts (x ': xs)) where
-  toSwagger Proxy = 
-    let 
+  toSwagger Proxy =
+    let
       -- TODO let getStatus take a proxy
       status = getStatus (undefined :: x)
       responseContentTypes = allContentType (Proxy @cts)
@@ -204,17 +204,17 @@ instance  {-# OVERLAPPABLE #-}
       -- TODO: This is not the monoid we think it is. it overrides whatever is on the left with
       -- whatever is on the right. So we're not actually adding multiple status codes
       (mempty & paths.at "/" ?~
-        ( mempty & swaggerMethod (Proxy @method) ?~ (mempty 
+        ( mempty & swaggerMethod (Proxy @method) ?~ (mempty
           & produces ?~ MimeList responseContentTypes
           & at status ?~ Inline (mempty & schema ?~ res)
-        )) & definitions .~ defs) `mappend` toSwagger (Proxy @(Verb' method cts xs)) 
+        )) & definitions .~ defs) `mappend` toSwagger (Proxy @(Verb' method cts xs))
       -- Lens magic. idk
-      {-setResponseFor (paths.(at "/"). _Just . swaggerMethod (Proxy @method) .  _Just . _) 
-        status 
+      {-setResponseFor (paths.(at "/"). _Just . swaggerMethod (Proxy @method) .  _Just . _)
+        status
         (declareResponse (Proxy @x))
         (toSwagger (Proxy @(Verb' method cts xs)))
         -}
-    {- setResponseFor (swaggerMethod (Proxy @method)) (getStatus (undefined :: x)) _ 
+    {- setResponseFor (swaggerMethod (Proxy @method)) (getStatus (undefined :: x)) _
      -}
 
 {-
@@ -292,7 +292,7 @@ instance ( RIndex a (b ': as) ~ ('S_ i) , UElem a as i) => UElem a (b ': as) ('S
   match y = case y of
     Z x -> Nothing
     S y -> match y
-    
+
 
 
 type family CheckElemIsMember (a :: k) (as :: [k]) :: Constraint where
@@ -304,5 +304,5 @@ type NoElementError (r :: k) (rs :: [k]) =
     ':$$: 'Text "But got:"
     ':$$: 'Text "    " ':<>: 'ShowType r
 
--- | This type family checks whether @a@ is 
+-- | This type family checks whether @a@ is
 

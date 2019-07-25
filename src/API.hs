@@ -15,14 +15,14 @@ import Network.HTTP.Types
 
 
 
-data NotFound = NotFound 
+data NotFound = NotFound
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON)
 
 instance ErrStatus NotFound where
   toErrStatus = const status404
 
-data Unauthorized = Unauthorized 
+data Unauthorized = Unauthorized
   deriving stock (Generic)
   deriving anyclass (ToJSON, FromJSON)
 

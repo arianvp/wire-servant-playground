@@ -27,7 +27,7 @@ instance All HasServer rets => HasServer (Rets rets) where
   type (Rets rets) = OpenUnion ...
 
 instance Member ret rets => HasServer (Ret ret rets) where
- 
+
 
 -- need to write an instance Such that
 Server (VerbOf POST [Created '[JSON] User, Unauthorized '[JSON] UnauthorizedMsg])
@@ -44,7 +44,7 @@ handlePost =
   else return (openUnionLift (UnauthorizedMsg "Authentication failed my dear"))
 
 handlePut :: Server (VerbOf PUT '[NoContent, Forbidden '[JSON] ForbiddenMsg])
-handlePut = 
+handlePut =
   if internalEndpoint
   then return (openUnionLift (ForbiddenMsg "Thou Shalt not pass"))
   else return (openUnionLift NoContent)
@@ -55,4 +55,4 @@ handler = do
   then return (openUnionLift (Unauthorized (UnauthorizedMsg "nooo")))
   else return (openUnionLift (OK (User "Gerrit"))
 
-  
+

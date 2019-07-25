@@ -117,6 +117,8 @@ app = genericServe server
 -- I'm not sure if it's worth it though
 --
 -- Servant.API.ResponseHeaders does something similar
+--
+
 server :: Routes AsServer
 server = Routes
   { get = get'
@@ -178,7 +180,20 @@ data UVerb (method :: StdMethod) (resources :: [k {- Resource -} ])
 data Resource (statusCode :: Nat) (headers :: [Symbol]) (contentTypes :: [*]) (return :: *)
 
 
+{- This is a good idea:
+ -
+type instance ResourceStatus MyBool = 201
+type instance ResourceType MyBool =  400
 
+-- "legalhold" :> LegalHold.API
+
+Oh no maybe not cz errors
+-- could not unify x0 ~ ResourceStatus Bool
+
+I like dis more. Ok use typeclass
+-- No instance IsResource Bool
+
+-}
 
 class IsResource resource where
   type ResourceStatus       resource :: Nat
@@ -189,6 +204,7 @@ class IsResource resource where
 -- TODO: (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method)
 -- type IsGoodResource resource = (IsResource resource, AllMime (ResourceContentTypes resource), ...)
 
+  
 instance IsResource (Resource statusCode headers contentTypes return) where
   type ResourceStatus (Resource statusCode headers contentTypes return)  =  statusCode
 --  type ResourceContentTypes resource :: '[*]

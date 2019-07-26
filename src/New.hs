@@ -76,9 +76,10 @@ import           Servant.Server.Internal
 
 
 
--- * the new stuff
+-- * the new stuff (library)
 
-type OpenUnion = NS I
+type OpenUnion = NS Resource  -- TODO: 'Resource' is part of the application, not the library.
+                              -- also, we probably want to use @NS f@ instead of @OpenUnion@.
 
 data UVerb (method :: StdMethod) (resources :: [*])
 
@@ -96,14 +97,7 @@ instance {- TODO: (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, R
   route = undefined
 
 
-mkRespond
-  :: forall (resource :: * -> *) (f :: * -> *) (x :: *) (xs :: [*]).
-     (Applicative f, IsMember (resource x) xs) =>
-     (x -> resource x) -> x -> f (OpenUnion xs)
-mkRespond = undefined
-
-
--- * example
+-- * example (code using the library)
 
 -- | Application-specific resource marker.  By wrapping application types defined in other
 -- modules with this, we can write non-orphan 'IsResource' instances.
@@ -115,16 +109,19 @@ newtype Resource (value :: *) = Resource (value :: *)
 -- the app-specific 'Resource' type.
 --
 -- Copy the type signature from 'mkRespond', and specialize.
+--
+-- TODO: add a class to the library that forces us to instantiate respond for @resource :: *
+-- -> *@ and make it easy.
 respond
   :: forall (x :: *) (xs :: [*]).
-     (IsMember (Resource x) xs) =>
-     x -> Handler (OpenUnion '[Resource Bool, Resource String])
-respond = undefined -- mkRespond Resource
+     (IsMember x xs) =>
+     x -> Handler (OpenUnion xs)
+respond = pure . inject . Resource
 
 
 -- | TODO: we can probably hide the 'Resource' here, and simply write @[Bool, String]@.
-type API = UVerb 'GET [ Resource Bool
-                      , Resource String
+type API = UVerb 'GET [ Bool
+                      , String
                       ]
 
 instance IsResource (Resource Bool) where

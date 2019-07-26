@@ -78,23 +78,35 @@ import           Servant.Server.Internal
 
 -- * the new stuff (library)
 
-type OpenUnion = NS Resource  -- TODO: 'Resource' is part of the application, not the library.
-                              -- also, we probably want to use @NS f@ instead of @OpenUnion@.
-
-data UVerb (method :: StdMethod) (resources :: [*])
+data UVerb (mkres :: * -> *) (method :: StdMethod) (resources :: [*])
 
 class IsResource (resource :: *) where
   type ResourceStatus       resource :: Nat
   type ResourceHeaders      resource :: [Symbol]
   type ResourceContentTypes resource :: [*]
 
-instance {- TODO: (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method) => -}
-         (All IsResource resources) =>
-         HasServer (UVerb (method :: StdMethod) (resources :: [*])) context where
-  type ServerT (UVerb method resources) m = m (OpenUnion resources)
+instance
+  ( All IsResource resources
+  , MakesResource mkres
+    -- TODO: AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method
+  ) => HasServer (UVerb (mkres :: * -> *) (method :: StdMethod) (resources :: [*])) context where
+  type ServerT (UVerb mkres method resources) m = m (NS mkres resources)
 
   hoistServerWithContext _ _ nt s = nt s
   route = undefined
+
+-- | 'return' for 'UVerb' handlers.  Pass it a value of an application type from the routing
+-- table, and it will return a value of the union of responses.
+respond
+  :: forall (f :: * -> *) (mkres :: * -> *) (x :: *) (xs :: [*]).
+     (Applicative f, MakesResource mkres, IsMember x xs)
+  => x -> f (NS mkres xs)
+respond = pure . inject . mkResource
+
+-- | TODO: headers will complicate this again somewhat.  but let's touch this when everything
+-- else works.
+class MakesResource (mkres :: * -> *) where
+  mkResource :: forall (value :: *). value -> mkres value
 
 
 -- * example (code using the library)
@@ -104,25 +116,12 @@ instance {- TODO: (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, R
 newtype Resource (value :: *) = Resource (value :: *)
   deriving newtype (Eq, Show, Generic)
 
--- | We also need to construct a variant of 'pure' that takes as much of the boilerplate out
--- of the handlers as possible.  this needs to be defined in the app, since it makes use of
--- the app-specific 'Resource' type.
---
--- Copy the type signature from 'mkRespond', and specialize.
---
--- TODO: add a class to the library that forces us to instantiate respond for @resource :: *
--- -> *@ and make it easy.
-respond
-  :: forall (x :: *) (xs :: [*]).
-     (IsMember x xs) =>
-     x -> Handler (OpenUnion xs)
-respond = pure . inject . Resource
+instance MakesResource Resource where
+  mkResource = Resource
 
+-- ...  now you want to define a bunch of shortcuts for UVerb that suit your api best.
 
--- | TODO: we can probably hide the 'Resource' here, and simply write @[Bool, String]@.
-type API = UVerb 'GET [ Bool
-                      , String
-                      ]
+type API = UVerb Resource 'GET [Bool, String]
 
 instance IsResource (Resource Bool) where
   type ResourceStatus       (Resource Bool) = 201
@@ -136,7 +135,7 @@ instance IsResource (Resource String) where
 
 
 handler :: Server API
-handler = respond True
+handler = if True then respond ("True" :: String) else respond True
 
 
 -- * old stuff, helpers.

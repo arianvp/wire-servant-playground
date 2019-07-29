@@ -16,6 +16,8 @@
 
 ** Design rationales
 
+TODO: outdated!!  merge this with the haddocks for 'UVerb'!
+
 We want to be able to return an arbitrary application type (or a union of types) from the
 handler, and the api type should give servant enough information to construct the response
 from that, namely status code, headers (this library provides an alternative to 'Headers' for

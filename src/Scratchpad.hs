@@ -51,7 +51,7 @@ import           Servant.Server.Internal
 
 
 newtype AsResource status contentTypes headers a = AsResource a
- 
+
 
 -- TODO: i guess this is so we can have default statusses?  i also guess i'm against it, but i'm not sure.
 newtype WithStatus n a = WithStatus a
@@ -157,7 +157,7 @@ instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMet
     where
       method = reflectMethod (Proxy @method)
       route' env request respond =
-        runAction action'  env request respond $ \ output -> do
+        runAction action'  env request respond $ \ (output :: NS I returns) -> do
            let (status, b') = collapse_NS . cmap_NS (Proxy @(AllCTRender cts `And` HasStatus)) (\(I b) -> K (toEnum $ getStatus b, handleAcceptH (Proxy @cts) (AcceptHeader accH) b)) $ output
            case b' of
              Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
@@ -204,12 +204,12 @@ class IsResource resource where
 -- TODO: (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method)
 -- type IsGoodResource resource = (IsResource resource, AllMime (ResourceContentTypes resource), ...)
 
-  
+
 instance IsResource (Resource statusCode headers contentTypes return) where
   type ResourceStatus (Resource statusCode headers contentTypes return)  =  statusCode
 --  type ResourceContentTypes resource :: '[*]
   type ResourceType (Resource statusCode headers contentTypes return)  =  return
-  
+
 
 data GetResourceType :: k -> * where
   MkGetResourceType :: ResourceType resource -> GetResourceType resource

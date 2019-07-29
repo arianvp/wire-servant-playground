@@ -85,38 +85,103 @@ class IsResource (resource :: *) where
   type ResourceHeaders      resource :: [Symbol]
   type ResourceContentTypes resource :: [*]
 
-instance
-  ( All IsResource resources
-  , MakesResource mkres
-    -- TODO: AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMethod method
-  ) => HasServer (UVerb (mkres :: * -> *) (method :: StdMethod) (resources :: [*])) context where
-  type ServerT (UVerb mkres method resources) m = m (NS mkres resources)
+
+instance {-# OVERLAPPABLE #-}
+  ( All IsResource (resource ': resource' ': resources)
+  , ReflectMethod method
+  , AllCTRender (ResourceContentTypes resource) resource
+  , AllMime (ResourceContentTypes resource)  -- implied, but i don't care!
+  , mkres ~ Resource
+  , KnownNat (ResourceStatus resource)
+  , HasServer (UVerb mkres method (resource' ': resources)) ctx
+  -- TODO: move some constraints to IsResource class?
+  ) => HasServer (UVerb mkres method (resource ': resource' ': resources)) ctx where
+  type ServerT (UVerb mkres method (resource ': resource' ': resources)) m = m (NS mkres (resource ': resource' ': resources))
 
   hoistServerWithContext _ _ nt s = nt s
+  route Proxy _ctx (action :: Delayed env (Handler (NS mkres (_resource : resource' : resources)))) = leafRouter route'
+    where
+      method = reflectMethod (Proxy @method)
+
+      route' env request respond = do
+        let action' = (action `addMethodCheck` methodCheck method request) `addAcceptCheck` acceptCheck (Proxy @(ResourceContentTypes resource)) accH
+            accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
+            status = toEnum . fromInteger $ natVal (Proxy @(ResourceStatus resource))
+
+        runAction action' env request respond $ \case
+         (S _res) -> _
+         (Z (Resource (output :: resource))) -> do
+          case handleAcceptH (Proxy @(ResourceContentTypes resource)) (AcceptHeader accH) output of
+            Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
+            Just (_contentT, body) ->
+              let bdy = if allowedMethodHead method request then "" else body
+              in Route $ responseLBS status ((hContentType, undefined {- cs contentT -}) : []) bdy
+
+
+class X
+
+
+instance {-# OVERLAPPING #-}
+  ( All IsResource '[resource]
+  , ReflectMethod method
+  , AllCTRender (ResourceContentTypes resource) resource
+  , AllMime (ResourceContentTypes resource)  -- implied, but i don't care!
+  , mkres ~ Resource
+  , KnownNat (ResourceStatus resource)
+  -- TODO: move some constraints to IsResource class?
+  ) => HasServer (UVerb (mkres :: * -> *) (method :: StdMethod) ('[resource])) context where
+  type ServerT (UVerb mkres method '[resource]) m = m (NS mkres '[resource])
+
+  hoistServerWithContext _ _ nt s = nt s
+  route Proxy _ctx (action :: Delayed env (Handler (NS mkres '[resource]))) = leafRouter route'
+    where
+      method = reflectMethod (Proxy @method)
+
+      route' env request respond = do
+        let action' = (action `addMethodCheck` methodCheck method request) `addAcceptCheck` acceptCheck (Proxy @(ResourceContentTypes resource)) accH
+            accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
+            status = toEnum . fromInteger $ natVal (Proxy @(ResourceStatus resource))
+
+        runAction action' env request respond $ \(Z (Resource (output :: resource))) -> do
+          case handleAcceptH (Proxy @(ResourceContentTypes resource)) (AcceptHeader accH) output of
+            Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
+            Just (_contentT, body) ->
+              let bdy = if allowedMethodHead method request then "" else body
+              in Route $ responseLBS status ((hContentType, undefined {- cs contentT -}) : []) bdy
+
+instance {-# OVERLAPPING #-}
+  ( All IsResource '[]
+  , TypeError ('Text "Your endpoint defines no return types, which is an error")
+  ) => HasServer (UVerb mkres method '[]) ctx where
+  type ServerT (UVerb mkres method '[]) m = m ()
+  hoistServerWithContext _ _ _ = undefined
   route = undefined
+
 
 -- | 'return' for 'UVerb' handlers.  Pass it a value of an application type from the routing
 -- table, and it will return a value of the union of responses.
 respond
-  :: forall (f :: * -> *) (mkres :: * -> *) (x :: *) (xs :: [*]).
-     (Applicative f, MakesResource mkres, IsMember x xs)
-  => x -> f (NS mkres xs)
-respond = pure . inject . mkResource
+  :: forall (f :: * -> *) {- (mkres :: * -> *) -} (x :: *) (xs :: [*]).
+     (Applicative f, {- MakesResource mkres x, -} IsMember x xs)
+  => x -> f (NS Resource xs)
+respond = pure . inject . Resource
 
 -- | TODO: headers will complicate this again somewhat.  but let's touch this when everything
 -- else works.
-class MakesResource (mkres :: * -> *) where
-  mkResource :: forall (value :: *). value -> mkres value
+class MakesResource (mkres :: * -> *) (value :: *) where
+  mkResource :: value -> mkres value
 
 
 -- * example (code using the library)
 
 -- | Application-specific resource marker.  By wrapping application types defined in other
 -- modules with this, we can write non-orphan 'IsResource' instances.
+--
+-- TODO: get rid of this?
 newtype Resource (value :: *) = Resource (value :: *)
   deriving newtype (Eq, Show, Generic)
 
-instance MakesResource Resource where
+instance MakesResource Resource value where
   mkResource = Resource
 
 -- ...  now you want to define a bunch of shortcuts for UVerb that suit your api best.

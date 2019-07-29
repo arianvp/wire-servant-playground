@@ -118,15 +118,22 @@ data UVerb (mkres :: * -> *) (method :: StdMethod) (cts :: [*]) (resources :: [*
 class HasStatus (mkres :: * -> *) (resource :: *) where
   getStatus :: forall (proxy :: * -> *). proxy (mkres resource) -> Status
 
+-- | Used in the 'UVerb' has 'HasServer' instance.
+type IsResource cts mkres =
+  ( Compose (AllCTRender cts) mkres `And`
+    HasStatus mkres `And`
+    MakesResource mkres
+  )
+
 instance
   ( ReflectMethod method
   , AllMime cts
-  , All (Compose (AllCTRender cts) mkres `And` HasStatus mkres `And` MakesResource mkres) resources
+  , All (IsResource cts mkres) resources
   ) => HasServer (UVerb mkres method cts resources) context where
   type ServerT (UVerb mkres method cts resources) m = m (NS mkres resources)
 
   hoistServerWithContext _ _ nt s = nt s
-  route Proxy _ctx (action :: Delayed env (Handler (NS mkres resources))) = leafRouter route'
+  route Proxy _ctx action = leafRouter route'
     where
       method = reflectMethod (Proxy @method)
 
@@ -140,17 +147,22 @@ instance
             mkProxy _ = Proxy
 
         runAction action' env request respond $ \(output :: NS mkres resources) -> do
-          let (status, b' :: Maybe (LBS, LBS)) =
-                collapse_NS $ cmap_NS
-                    (Proxy @(Compose (AllCTRender cts) mkres `And` HasStatus mkres `And` MakesResource mkres))
-                    (\b -> K ( getStatus $ mkProxy b
-                             , handleAcceptH (Proxy @cts) (AcceptHeader accH) b
-                             ))
-                    output
+          let encodeResource
+                :: forall resource.
+                   IsResource cts mkres resource =>
+                   mkres resource -> K (Status, Maybe (LBS, LBS)) resource
+              encodeResource res = K
+                  ( getStatus $ mkProxy res
+                  , handleAcceptH (Proxy @cts) (AcceptHeader accH) res
+                  )
 
-          case b' of
-             Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
-             Just (contentT, body) ->
+              pickResource
+                :: NS mkres resources -> (Status, Maybe (LBS, LBS))
+              pickResource = collapse_NS . cmap_NS (Proxy @(IsResource cts mkres)) encodeResource
+
+          case pickResource output of
+            (_, Nothing) -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
+            (status, Just (contentT, body)) ->
               let bdy = if allowedMethodHead method request then "" else body
               in Route $ responseLBS status ((hContentType, cs contentT) : []) bdy
 
@@ -169,7 +181,7 @@ class MakesResource (mkres :: * -> *) (value :: *) where
 -- * example (code using the library)
 
 -- | Application-specific resource marker.  By wrapping application types defined in other
--- modules with this, we can write non-orphan 'IsResource' instances.
+-- modules with this, we can write non-orphan 'HasStatus' instances.
 --
 -- TODO: get rid of this?
 newtype Resource (value :: *) = Resource (value :: *)

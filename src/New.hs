@@ -45,8 +45,7 @@ module New where
 
 
 import Prelude
-import           Data.String.Conversions
-                 (cs)
+import Data.String.Conversions
 import Data.Kind
 import Control.Lens (at, (&), (.~), (?~), (<.), (.>), _Just, set)
 import Data.Swagger
@@ -61,6 +60,7 @@ import Servant.API.ContentTypes
 import Servant.API.Generic
 import Data.Aeson.Types
 import Data.Swagger.Declare
+import Network.Wai.Internal (Request, Response)
 
 import Data.SOP.NS
 import Data.SOP.Constraint
@@ -86,6 +86,9 @@ class IsResource (resource :: *) where
   type ResourceContentTypes resource :: [*]
 
 
+-- FUTUREWORK: go back to the nice collapse_NS, map_NS design?
+
+
 instance {-# OVERLAPPABLE #-}
   ( All IsResource (resource ': resource' ': resources)
   , ReflectMethod method
@@ -104,12 +107,38 @@ instance {-# OVERLAPPABLE #-}
       method = reflectMethod (Proxy @method)
 
       route' env request respond = do
-        let action' = (action `addMethodCheck` methodCheck method request) `addAcceptCheck` acceptCheck (Proxy @(ResourceContentTypes resource)) accH
-            accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
-            status = toEnum . fromInteger $ natVal (Proxy @(ResourceStatus resource))
+        let action' :: Delayed env (Handler a00)
+            action' = buildAction action accH
 
-        runAction action' env request respond $ \case
-         (S _res) -> _
+            accH :: SBS
+            accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
+
+        runAction action' env request respond (buildAction method env request)
+
+
+
+-- class MakesResponse _ _ where
+--   mkResponse :: _
+
+
+buildAction :: forall env resource resource' resources handler handler'.
+  ( handler ~ Delayed env (Handler (NS Resource (resource : resource' : resources)))
+  , handler' ~ Delayed env (Handler (NS Resource (resource' : resources)))
+  ) =>
+  handler -> SBS -> handler'
+buildAction = undefined
+{-
+mkAction' :: _
+mkAction' action accH = action
+  `addMethodCheck` methodCheck method request
+  `addAcceptCheck` acceptCheck (Proxy @(ResourceContentTypes resource))
+  accH
+
+-}
+
+buildActionRunner :: Method -> env -> Request -> (NS Resource (x ': xs)) -> RouteResult Network.Wai.Internal.Response
+buildActionRunner _ _ _ _ = undefined
+        {-\case
          (Z (Resource (output :: resource))) -> do
           case handleAcceptH (Proxy @(ResourceContentTypes resource)) (AcceptHeader accH) output of
             Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
@@ -117,8 +146,25 @@ instance {-# OVERLAPPABLE #-}
               let bdy = if allowedMethodHead method request then "" else body
               in Route $ responseLBS status ((hContentType, undefined {- cs contentT -}) : []) bdy
 
+            status = toEnum . fromInteger $ natVal (Proxy @(ResourceStatus resource))
 
-class X
+
+
+our solution will do the accept header check on the request after running the handler.  this
+is necessary, because the handler decides which type to return, which decides which content
+types are supported.  it is also bad, since the handler may have caused effects before servant
+responds with 406.
+solution: content types are given on UVerb level, not on IsResource level.
+
+
+headers will work with the old servant approach.  re-think that later, independently!
+
+
+IsResource will be renamed to HasStatus
+
+
+-}
+
 
 
 instance {-# OVERLAPPING #-}

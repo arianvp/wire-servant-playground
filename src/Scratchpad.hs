@@ -15,8 +15,7 @@ module Scratchpad where
 
 
 import Prelude
-import           Data.String.Conversions
-                 (cs)
+import Data.String.Conversions
 import Data.Kind
 import Control.Lens (at, (&), (.~), (?~), (<.), (.>), _Just, set)
 import Data.Swagger
@@ -158,7 +157,11 @@ instance (AllMime cts, All (AllCTRender cts `And` HasStatus) returns, ReflectMet
       method = reflectMethod (Proxy @method)
       route' env request respond =
         runAction action'  env request respond $ \ (output :: NS I returns) -> do
-           let (status, b') = collapse_NS . cmap_NS (Proxy @(AllCTRender cts `And` HasStatus)) (\(I b) -> K (toEnum $ getStatus b, handleAcceptH (Proxy @cts) (AcceptHeader accH) b)) $ output
+           let (status, b' :: Maybe (LBS, LBS)) =
+                 collapse_NS . cmap_NS
+                     (Proxy @(AllCTRender cts `And` HasStatus))
+                     (\(I b) -> K (toEnum $ getStatus b, handleAcceptH (Proxy @cts) (AcceptHeader accH) b))
+                     $ output
            case b' of
              Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
              Just (contentT, body) ->

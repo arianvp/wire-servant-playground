@@ -78,142 +78,90 @@ import           Servant.Server.Internal
 
 -- * the new stuff (library)
 
-data UVerb (mkres :: * -> *) (method :: StdMethod) (resources :: [*])
+{- | Variant of the 'Verb' type for handlers that return an open union of different types (eg.,
+@'[Thing, Error]@).  'UVerb' defines request method, supported response body encodings, and a
+list containing all responses types that the implementing handler can return.
 
-class IsResource (resource :: *) where
-  type ResourceStatus       resource :: Nat
-  type ResourceHeaders      resource :: [Symbol]
-  type ResourceContentTypes resource :: [*]
+@mkres@ is a @newtype@ wrapper that needs to be introduced by the library user.  It lets you
+write 'HasStatusCode' instances @mkres t@ for any application type @t@ without introducing
+orphans, for as many @t@ as you like at the cost of a single @newtype@.  See 'MakesResource'.
+
+The set of supported content types is defined once for all items in the open union of return
+types.
 
 
--- FUTUREWORK: go back to the nice collapse_NS, map_NS design?
+**Keep reading if you are interested in the design choicse we made.**
 
+it would be nice to have individual content types supposed for different items in the union,
+something like
 
-instance {-# OVERLAPPABLE #-}
-  ( All IsResource (resource ': resource' ': resources)
-  , ReflectMethod method
-  , AllCTRender (ResourceContentTypes resource) resource
-  , AllMime (ResourceContentTypes resource)  -- implied, but i don't care!
-  , mkres ~ Resource
-  , KnownNat (ResourceStatus resource)
-  , HasServer (UVerb mkres method (resource' ': resources)) ctx
-  -- TODO: move some constraints to IsResource class?
-  ) => HasServer (UVerb mkres method (resource ': resource' ': resources)) ctx where
-  type ServerT (UVerb mkres method (resource ': resource' ': resources)) m = m (NS mkres (resource ': resource' ': resources))
+>>> data UVerb (mkres :: * -> *) (method :: StdMethod) (resources :: [*])
+>>>
+>>> class IsResource (resource :: *) where
+>>>   type resourceContentTypes resource :: [*]
+
+This has two bad implementations: (a) content negotiation happens with 'addAcceptCheck' before
+the handler is called.  Then we don't know what the supported response content types will be,
+because that depends on what item of the union the handler will return later.  We could
+compute the intersection of all items in the union and process the accept header based on
+that, but that seems complicated and weird.  (b) content negotiation happens *after* the
+handler is called, but 'fmap'-ping a function @:: Route a -> Route a@ into the 'Delayed'
+response.  Then the handler would be called with all the effects it may have (touching the
+database, sending out emails, ...) by the time the response is @406 bad Accept header@.  This
+is at best confusing.
+
+-}
+data UVerb (mkres :: * -> *) (method :: StdMethod) (cts :: [*]) (resources :: [*])
+
+-- | 'getStatus' takes a proxy, because some library (eg., swagger, client) have no resource
+-- values to pass in here.
+class HasStatus (mkres :: * -> *) (resource :: *) where
+  getStatus :: forall (proxy :: * -> *). proxy (mkres resource) -> Status
+
+instance
+  ( ReflectMethod method
+  , AllMime cts
+  , All (Compose (AllCTRender cts) mkres `And` HasStatus mkres `And` MakesResource mkres) resources
+  ) => HasServer (UVerb mkres method cts resources) context where
+  type ServerT (UVerb mkres method cts resources) m = m (NS mkres resources)
 
   hoistServerWithContext _ _ nt s = nt s
-  route Proxy _ctx (action :: Delayed env (Handler (NS mkres (_resource : resource' : resources)))) = leafRouter route'
+  route Proxy _ctx (action :: Delayed env (Handler (NS mkres resources))) = leafRouter route'
     where
       method = reflectMethod (Proxy @method)
 
       route' env request respond = do
-        let action' :: Delayed env (Handler a00)
-            action' = buildAction action accH
+        let accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
+            action' = action
+                `addMethodCheck` methodCheck method request
+                `addAcceptCheck` acceptCheck (Proxy @cts) accH
 
-            accH :: SBS
-            accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
+            mkProxy :: a -> Proxy a
+            mkProxy _ = Proxy
 
-        runAction action' env request respond (buildAction method env request)
+        runAction action' env request respond $ \(output :: NS mkres resources) -> do
+          let (status, b' :: Maybe (LBS, LBS)) =
+                collapse_NS $ cmap_NS
+                    (Proxy @(Compose (AllCTRender cts) mkres `And` HasStatus mkres `And` MakesResource mkres))
+                    (\b -> K ( getStatus $ mkProxy b
+                             , handleAcceptH (Proxy @cts) (AcceptHeader accH) b
+                             ))
+                    output
 
-
-
--- class MakesResponse _ _ where
---   mkResponse :: _
-
-
-buildAction :: forall env resource resource' resources handler handler'.
-  ( handler ~ Delayed env (Handler (NS Resource (resource : resource' : resources)))
-  , handler' ~ Delayed env (Handler (NS Resource (resource' : resources)))
-  ) =>
-  handler -> SBS -> handler'
-buildAction = undefined
-{-
-mkAction' :: _
-mkAction' action accH = action
-  `addMethodCheck` methodCheck method request
-  `addAcceptCheck` acceptCheck (Proxy @(ResourceContentTypes resource))
-  accH
-
--}
-
-buildActionRunner :: Method -> env -> Request -> (NS Resource (x ': xs)) -> RouteResult Network.Wai.Internal.Response
-buildActionRunner _ _ _ _ = undefined
-        {-\case
-         (Z (Resource (output :: resource))) -> do
-          case handleAcceptH (Proxy @(ResourceContentTypes resource)) (AcceptHeader accH) output of
-            Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
-            Just (_contentT, body) ->
+          case b' of
+             Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
+             Just (contentT, body) ->
               let bdy = if allowedMethodHead method request then "" else body
-              in Route $ responseLBS status ((hContentType, undefined {- cs contentT -}) : []) bdy
-
-            status = toEnum . fromInteger $ natVal (Proxy @(ResourceStatus resource))
-
-
-
-our solution will do the accept header check on the request after running the handler.  this
-is necessary, because the handler decides which type to return, which decides which content
-types are supported.  it is also bad, since the handler may have caused effects before servant
-responds with 406.
-solution: content types are given on UVerb level, not on IsResource level.
-
-
-headers will work with the old servant approach.  re-think that later, independently!
-
-
-IsResource will be renamed to HasStatus
-
-
--}
-
-
-
-instance {-# OVERLAPPING #-}
-  ( All IsResource '[resource]
-  , ReflectMethod method
-  , AllCTRender (ResourceContentTypes resource) resource
-  , AllMime (ResourceContentTypes resource)  -- implied, but i don't care!
-  , mkres ~ Resource
-  , KnownNat (ResourceStatus resource)
-  -- TODO: move some constraints to IsResource class?
-  ) => HasServer (UVerb (mkres :: * -> *) (method :: StdMethod) ('[resource])) context where
-  type ServerT (UVerb mkres method '[resource]) m = m (NS mkres '[resource])
-
-  hoistServerWithContext _ _ nt s = nt s
-  route Proxy _ctx (action :: Delayed env (Handler (NS mkres '[resource]))) = leafRouter route'
-    where
-      method = reflectMethod (Proxy @method)
-
-      route' env request respond = do
-        let action' = (action `addMethodCheck` methodCheck method request) `addAcceptCheck` acceptCheck (Proxy @(ResourceContentTypes resource)) accH
-            accH = fromMaybe ct_wildcard $ lookup hAccept $ requestHeaders request
-            status = toEnum . fromInteger $ natVal (Proxy @(ResourceStatus resource))
-
-        runAction action' env request respond $ \(Z (Resource (output :: resource))) -> do
-          case handleAcceptH (Proxy @(ResourceContentTypes resource)) (AcceptHeader accH) output of
-            Nothing -> FailFatal err406 -- this should not happen (checked before), so we make it fatal if it does
-            Just (_contentT, body) ->
-              let bdy = if allowedMethodHead method request then "" else body
-              in Route $ responseLBS status ((hContentType, undefined {- cs contentT -}) : []) bdy
-
-instance {-# OVERLAPPING #-}
-  ( All IsResource '[]
-  , TypeError ('Text "Your endpoint defines no return types, which is an error")
-  ) => HasServer (UVerb mkres method '[]) ctx where
-  type ServerT (UVerb mkres method '[]) m = m ()
-  hoistServerWithContext _ _ _ = undefined
-  route = undefined
-
+              in Route $ responseLBS status ((hContentType, cs contentT) : []) bdy
 
 -- | 'return' for 'UVerb' handlers.  Pass it a value of an application type from the routing
 -- table, and it will return a value of the union of responses.
 respond
-  :: forall (f :: * -> *) {- (mkres :: * -> *) -} (x :: *) (xs :: [*]).
-     (Applicative f, {- MakesResource mkres x, -} IsMember x xs)
-  => x -> f (NS Resource xs)
-respond = pure . inject . Resource
+  :: forall (f :: * -> *) (mkres :: * -> *) (x :: *) (xs :: [*]).
+     (Applicative f, MakesResource mkres x, IsMember x xs)
+  => x -> f (NS mkres xs)
+respond = pure . inject . mkResource
 
--- | TODO: headers will complicate this again somewhat.  but let's touch this when everything
--- else works.
 class MakesResource (mkres :: * -> *) (value :: *) where
   mkResource :: value -> mkres value
 
@@ -225,28 +173,23 @@ class MakesResource (mkres :: * -> *) (value :: *) where
 --
 -- TODO: get rid of this?
 newtype Resource (value :: *) = Resource (value :: *)
-  deriving newtype (Eq, Show, Generic)
+  deriving newtype (Eq, Show, Generic, FromJSON, ToJSON {-, ToSchema -- see issue in swagger2 -})
 
 instance MakesResource Resource value where
   mkResource = Resource
 
 -- ...  now you want to define a bunch of shortcuts for UVerb that suit your api best.
 
-type API = UVerb Resource 'GET [Bool, String]
+type API = UVerb Resource 'GET '[JSON] [Bool, String]
 
-instance IsResource (Resource Bool) where
-  type ResourceStatus       (Resource Bool) = 201
-  type ResourceHeaders      (Resource Bool) = '[]
-  type ResourceContentTypes (Resource Bool) = '[JSON]
-
-instance IsResource (Resource String) where
-  type ResourceStatus       (Resource String) = 303
-  type ResourceHeaders      (Resource String) = '["Location"]
-  type ResourceContentTypes (Resource String) = '[PlainText, JSON]
-
+instance HasStatus Resource Bool   where getStatus _ = status201
+instance HasStatus Resource String where getStatus _ = status303
 
 handler :: Server API
-handler = if True then respond ("True" :: String) else respond True
+handler = if False then respond ("True" :: String) else respond True
+
+app :: Application
+app = serve (Proxy @API) handler
 
 
 -- * old stuff, helpers.

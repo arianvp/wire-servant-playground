@@ -16,6 +16,12 @@
 
 ** Design rationales
 
+
+this is actually quite close to 'Verb' in its latest shape and flavor.  It's like having a
+ToJSON instance for an open union type, with the (important!) difference that the status code
+is determined by the specific element in the union.
+
+
 TODO: outdated!!  merge this with the haddocks for 'UVerb'!
 
 We want to be able to return an arbitrary application type (or a union of types) from the

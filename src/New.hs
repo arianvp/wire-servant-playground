@@ -193,7 +193,7 @@ class MakesResource (mkres :: * -> *) (value :: *) where
 --
 -- TODO: get rid of this?
 newtype Resource (value :: *) = Resource (value :: *)
-  deriving newtype (Eq, Show, Generic, FromJSON, ToJSON {-, ToSchema -- see issue in swagger2 -})
+  deriving newtype (Eq, Show, Generic, FromJSON, ToJSON, ToSchema)
 
 instance MakesResource Resource value where
   mkResource = Resource

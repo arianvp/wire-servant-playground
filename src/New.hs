@@ -9,7 +9,6 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE DerivingVia #-}
--- | "Servant"
 {-# OPTIONS_GHC -Wno-unused-imports -Wno-name-shadowing #-}
 
 {- | ...
@@ -91,7 +90,7 @@ import           Servant.Server.Internal
 list containing all responses types that the implementing handler can return.
 
 @mkres@ is a @newtype@ wrapper that needs to be introduced by the library user.  It lets you
-write 'HasStatusCode' instances @mkres t@ for any application type @t@ without introducing
+write 'HasStatus' instances @mkres t@ for any application type @t@ without introducing
 orphans, for as many @t@ as you like at the cost of a single @newtype@.  See 'MakesResource'.
 
 The set of supported content types is defined once for all items in the open union of return
@@ -210,6 +209,60 @@ handler = if False then respond ("True" :: String) else respond True
 
 app :: Application
 app = serve (Proxy @API) handler
+
+
+-- * swagger
+
+instance
+  forall cts method x mkres.
+  ( AllAccept cts
+  , SwaggerMethod method
+  , ToSchema x
+  , HasStatus mkres x
+  ) => HasSwagger (UVerb mkres method cts (x ': '[])) where
+  toSwagger Proxy =
+    let
+      status = statusCode $ getStatus (Proxy @(mkres x))
+      responseContentTypes = allContentType (Proxy @cts)
+      (defs, res) = runDeclare (declareSchemaRef (Proxy @x)) mempty
+    in
+      mempty & paths.at "/" ?~
+        ( mempty & swaggerMethod (Proxy @method) ?~ (mempty
+          & produces ?~ MimeList responseContentTypes
+          & at status ?~ Inline (mempty & schema ?~ res)
+        )) & definitions .~ defs
+
+
+instance  {-# OVERLAPPABLE #-}
+  forall cts method x xs mkres.
+  ( AllAccept cts
+  , SwaggerMethod method
+  , ToSchema x
+  , HasStatus mkres x
+  , HasSwagger (UVerb mkres method cts xs)
+  ) => HasSwagger (UVerb mkres method cts (x ': xs)) where
+  toSwagger Proxy =
+    let
+      status = statusCode $ getStatus (Proxy @(mkres x))
+      responseContentTypes = allContentType (Proxy @cts)
+      (defs, res) = runDeclare (declareSchemaRef (Proxy @x)) mempty
+    in
+
+      -- TODO: This is not the monoid we think it is. it overrides whatever is on the left with
+      -- whatever is on the right. So we're not actually adding multiple status codes
+      (mempty & paths.at "/" ?~
+        ( mempty & swaggerMethod (Proxy @method) ?~ (mempty
+          & produces ?~ MimeList responseContentTypes
+          & at status ?~ Inline (mempty & schema ?~ res)
+        )) & definitions .~ defs) `mappend` toSwagger (Proxy @(UVerb mkres method cts xs))
+      -- Lens magic. idk
+      {-setResponseFor (paths.(at "/"). _Just . swaggerMethod (Proxy @method) .  _Just . _)
+        status
+        (declareResponse (Proxy @x))
+        (toSwagger (Proxy @(Verb' method cts xs)))
+        -}
+    {- setResponseFor (swaggerMethod (Proxy @method)) (getStatus (undefined :: x)) _
+     -}
 
 
 -- * old stuff, helpers.

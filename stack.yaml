@@ -1,0 +1,7 @@
+resolver: lts-12.10 #lts-13.27
+
+packages:
+- .
+
+extra-deps:
+- world-peace-1.0.1.0
